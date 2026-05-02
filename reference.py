@@ -2,9 +2,10 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.graphics.tsaplots import plot_acf
 
 def read_data():
-    df = pd.read_csv("CPITimeSeries.csv", low_memory=False)
+    df = pd.read_csv("C:/Users/macdo/OneDrive/Pulpit\studia/TSAF/project/CPITimeSeries.csv", low_memory=False)
 
     greece_cpi = df[(df['Country Name'] == 'Greece') & 
                     (df['Indicator Name'] == 'Consumer Price Index, All items')]
@@ -48,3 +49,13 @@ if __name__ == "__main__":
     # trend_data = decomposition.trend
     # seasonal_data = decomposition.seasonal
     # erratic_data = decomposition.resid
+
+    # Usunięcie NaN (resid ma NaN na brzegach)
+    residuals = decomposition.resid.dropna()
+
+    # Wykres korelogramu (ACF) z granicami ufności
+    plt.figure(figsize=(10, 5))
+    plot_acf(residuals, lags=40)  # możesz zmienić liczbę lagów
+    plt.title('Korelogram (ACF) dla składnika losowego (residuals)')
+    plt.tight_layout()
+    plt.show()

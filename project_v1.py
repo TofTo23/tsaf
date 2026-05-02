@@ -76,7 +76,6 @@ def differencing(values):
         else:
             values_deseasoned1[i]= values[i] - values[i-12]
 
-
     return erratic1, values_detrended1, values_deseasoned1
 
 def plot_cpi(values, index, trend, values_detrended, seasonal, values_deseasoned, erratic, trendline, values_detrended1, values_deseasoned1, erratic1):
@@ -150,7 +149,7 @@ def plot_cpi(values, index, trend, values_detrended, seasonal, values_deseasoned
     ax9.set_xlabel('Time')
     ax9.set_ylabel('Value')
 
-    ax10.plot(index, values-values_detrended1-erratic1, color='orange', linewidth=2)
+    ax10.plot(index, values_detrended1-erratic1, color='orange', linewidth=2)
     ax10.set_title('Seasonality (Original-detrended)')
     ax10.set_xlabel('Time')
     ax10.set_ylabel('Value')
@@ -165,7 +164,7 @@ def plot_cpi(values, index, trend, values_detrended, seasonal, values_deseasoned
     ax12.set_xlabel('Time')
     ax12.set_ylabel('Value')
 
-    ax13.plot(index, values - values_deseasoned1-erratic1, color='cyan', linewidth=2)
+    ax13.plot(index, values-values_detrended1, color='cyan', linewidth=2)
     ax13.set_title('Trend (Original - Deseasoned)')
     ax13.set_xlabel('Time')
     ax13.set_ylabel('Value')
@@ -178,7 +177,7 @@ def plot_cpi(values, index, trend, values_detrended, seasonal, values_deseasoned
 
     plt.show()
 
-def split_data(values, index, test_size=24):
+def split_data(values, index, test_size=48):
 
     train_values = values[:-test_size]    
     train_index = index[:-test_size]    
@@ -188,15 +187,367 @@ def split_data(values, index, test_size=24):
     
     return train_values, test_values, train_index, test_index
 
+def manual_pacf(data, max_lag=20):
+    """
+    Ręcznie oblicza Częściową Funkcję Autokorelacji (PACF) 
+    poprzez sekwencyjne dopasowywanie modeli AR(p) metodą OLS.
+    """
+    N = len(data)
+    pacf_values = np.zeros(max_lag + 1)
+    pacf_values[0] = 1.0  # PACF dla opóźnienia 0 to zawsze 1.0 (korelacja z samym sobą)
+
+    print("Obliczanie PACF...")
+    for p in range(1, max_lag + 1):
+        # 1. Przygotowujemy macierz opóźnień X i wektor celów Y dla modelu AR(p)
+        X = np.zeros((N - p, p))
+        Y = np.zeros(N - p)
+
+        for i in range(p, N):
+            X[i-p] = data[i-p : i][::-1]  # Opóźnienia od 1 do p
+            Y[i-p] = data[i]
+
+        # Dodajemy kolumnę jedynek (wyraz wolny) do macierzy X
+        X = np.column_stack((np.ones(len(X)), X))
+
+        # 2. Metoda Najmniejszych Kwadratów (OLS): beta = (X^T * X)^-1 * X^T * Y
+        beta = np.linalg.inv(X.T @ X) @ X.T @ Y
+
+        # 3. PACF dla danego opóźnienia to OSTATNI współczynnik z wyliczonego wektora beta
+        # beta[0] to wyraz wolny, beta[1] to lag 1, ..., beta[-1] to lag p.
+        pacf_values[p] = beta[-1]
+
+    # Obliczanie przedziału ufności dla wykresu (5% poziom istotności)
+    conf_interval = 1.96 / np.sqrt(N)
+    
+    return pacf_values, conf_interval
+
+def plot_manual_pacf(pacf_values, conf_interval):
+    """
+    Rysuje wykres Częściowej Funkcji Autokorelacji (PACF) z granicami ufności.
+    """
+    lags = np.arange(len(pacf_values))
+    
+    plt.figure(figsize=(10, 4))
+    
+    # Rysowanie "lizaków" (słupków)
+    plt.stem(lags, pacf_values, basefmt="k-")    
+    
+    # Rysowanie niebieskiego paska przedziału ufności
+    plt.axhspan(-conf_interval, conf_interval, alpha=0.2, color='blue', label='Przedział ufności (95%)')
+    
+    # Linie pomocnicze i opisy
+    plt.axhline(0, color='black', linewidth=1)
+    plt.title("Ręczny wykres PACF (Partial Autocorrelation Function)")
+    plt.xlabel("Opóźnienie (Lag)")
+    plt.ylabel("Częściowa Autokorelacja")
+    plt.xticks(lags) # Pokazuje wszystkie numery lagów na osi X
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.show()
+
+def fit_ar_ols(data, p):
+    """
+    Dopasowuje model AR(p) za pomocą Metody Najmniejszych Kwadratów (OLS).
+    """
+    N = len(data)
+    if p == 0:
+        mean = np.mean(data)
+        return mean, np.array([]), data - mean
+
+    # Macierz X (predyktory) i wektor Y (cel)
+    X = np.zeros((N - p, p + 1))
+    Y = data[p:]
+    
+    X[:, 0] = 1.0  # Wyraz wolny (intercept)
+    for i in range(1, p + 1):
+        X[:, i] = data[p - i : N - i]
+
+    # Rozwiązanie OLS: beta = (X^T * X)^-1 * X^T * Y
+    # Używamy lstsq dla lepszej stabilności numerycznej
+    beta = np.linalg.lstsq(X, Y, rcond=None)[0]
+    
+    intercept = beta[0]
+    ar_coefs = beta[1:]
+
+    # Obliczanie reszt (residuals)
+    fitted = X @ beta
+    residuals = np.zeros(N)
+    residuals[p:] = Y - fitted
+    
+    return intercept, ar_coefs, residuals
+
+
+def fit_arma_hannan_rissanen(data, p, q, m=15):
+    """
+    Dopasowuje model ARMA(p,q) wykorzystując algorytm Hannana-Rissanena.
+    m to rząd pomocniczego modelu AR używanego do oszacowania reszt.
+    """
+    if q == 0:
+        # Jeśli q=0, to po prostu zwykły model AR
+        intercept, ar_coefs, res = fit_ar_ols(data, p)
+        return intercept, ar_coefs, np.array([]), res
+
+    # KROK 1: Dopasowanie AR(m), aby uzyskać pierwsze oszacowanie reszt
+    # m powinno być większe niż max(p, q).
+    m = max(m, p + q + 1)
+    _, _, init_residuals = fit_ar_ols(data, m)
+
+    # KROK 2: Właściwe dopasowanie OLS z wykorzystaniem X i oszacowanych reszt
+    N = len(data)
+    start = max(p, q, m) # Startujemy tam, gdzie mamy pełne dane dla X i reszt
+    num_rows = N - start
+
+    X = np.zeros((num_rows, 1 + p + q))
+    Y = data[start:]
+
+    X[:, 0] = 1.0  # Wyraz wolny
+    
+    # Dodawanie opóźnień AR (zmienna zależna)
+    for i in range(1, p + 1):
+        X[:, i] = data[start - i : N - i]
+        
+    # Dodawanie opóźnień MA (oszacowane reszty z Kroku 1)
+    for j in range(1, q + 1):
+        X[:, p + j] = init_residuals[start - j : N - j]
+
+    # Rozwiązanie OLS
+    beta = np.linalg.lstsq(X, Y, rcond=None)[0]
+    
+    intercept = beta[0]
+    ar_coefs = beta[1 : p + 1]
+    ma_coefs = beta[p + 1 :]
+
+    # Ostateczne wyliczenie reszt dla naszego modelu ARMA
+    fitted = X @ beta
+    final_residuals = np.zeros(N)
+    final_residuals[start:] = Y - fitted
+
+    return intercept, ar_coefs, ma_coefs, final_residuals
+
+
+def forecast_arma(data, intercept, ar_coefs, ma_coefs, residuals, steps):
+    """
+    Generuje predykcję na 'steps' kroków w przód na bazie dopasowanego modelu ARMA.
+    """
+    p = len(ar_coefs)
+    q = len(ma_coefs)
+    
+    # Kopiujemy dane i reszty do list, aby móc dynamicznie "doklejać" predykcje
+    history = list(data)
+    past_res = list(residuals)
+
+    forecasts = []
+    for h in range(steps):
+        pred = intercept
+        
+        # Komponent AR: opiera się na rzeczywistej historii lub poprzednich predykcjach
+        for i in range(p):
+            pred += ar_coefs[i] * history[-1 - i]
+            
+        # Komponent MA: opiera się TYLKO na historycznych, znanych błędach.
+        # Wartość oczekiwana błędu w przyszłości to 0, więc ich nie dodajemy.
+        for j in range(q):
+            # Używamy historycznych reszt tylko jeśli wciąż sięgamy w przeszłość
+            if h - j <= 0: 
+                pred += ma_coefs[j] * past_res[-1 - j + h]
+
+        forecasts.append(pred)
+        history.append(pred) # Dodajemy predykcję jako "fakt" dla kolejnego kroku AR
+        past_res.append(0.0) # Przyszłe błędy zawsze wynoszą 0
+        
+    return np.array(forecasts)
+
+def reconstruct_forecast(original_values, differenced_values, erratic_forecast, steps):
+    """
+    Odtwarza oryginalny szereg czasowy z prognozy komponentu resztkowego (erratic),
+    odwracając proces pierwszego różniczkowania i różniczkowania sezonowego (lag=12).
+    """
+    # Tworzymy listy z historycznymi danymi, aby móc do nich "doklejać" 
+    # nasze predykcje, z których będziemy korzystać w kolejnych krokach iteracji.
+    hist_D = list(differenced_values)
+    hist_X = list(original_values)
+    
+    final_forecast = []
+    
+    for h in range(steps):
+        # Aktualna prognoza samego szumu
+        pred_erratic = erratic_forecast[h]
+        
+        # 1. Odwrócenie sezonowości (lag=12)
+        # D(t) = Erratic(t) + D(t-12)
+        pred_D = pred_erratic + hist_D[-12]
+        hist_D.append(pred_D) # Zapisujemy, bo przyda się za 12 kroków
+        
+        # 2. Odwrócenie trendu (lag=1)
+        # X(t) = D(t) + X(t-1)
+        pred_X = pred_D + hist_X[-1]
+        hist_X.append(pred_X) # Zapisujemy, bo przyda się w następnym kroku
+        
+        final_forecast.append(pred_X)
+        
+    return np.array(final_forecast)
+
+def manual_holt_winters(data, slen=12, alpha=0.2, beta=0.05, gamma=0.3, steps_ahead=24):
+    """
+    Ręczna implementacja modelu Holta-Wintersa (Triple Exponential Smoothing)
+    dla wariantu addytywnego.
+    
+    alpha, beta, gamma to wagi dla (odpowiednio) poziomu, trendu i sezonowości.
+    """
+    data = list(data) # Upewniamy się, że operujemy na liście
+    
+    # ---------------------------------------------------------
+    # 1. INICJALIZACJA (dla pierwszego roku, tj. slen=12)
+    # ---------------------------------------------------------
+    # Początkowy poziom: średnia z pierwszego roku
+    L = [sum(data[0:slen]) / float(slen)]
+    
+    # Początkowy trend: średnia różnica między 2. a 1. rokiem
+    # b0 = ( (Y_13 - Y_1) + (Y_14 - Y_2) + ... ) / 12^2
+    trend_init = sum([ (data[slen+i] - data[i]) / slen for i in range(slen) ]) / slen
+    B = [trend_init]
+    
+    # Początkowa sezonowość: różnica między wartością z 1. roku a początkowym poziomem
+    S = [data[i] - L[0] for i in range(slen)]
+    
+    # ---------------------------------------------------------
+    # 2. DOPASOWANIE DO DANYCH (Filtrowanie)
+    # ---------------------------------------------------------
+    for t in range(len(data)):
+        if t == 0:
+            continue # Zerowy element już zainicjowaliśmy
+            
+        # Odczytujemy historyczną sezonowość (sprzed roku)
+        # Jeśli t < slen, bierzemy sezonowość inicjalną. Jeśli t >= slen, bierzemy z historii wyliczeń.
+        s_t_minus_s = S[t] if t < slen else S[-slen]
+        
+        # Równania Holta-Wintersa
+        l_t = alpha * (data[t] - s_t_minus_s) + (1 - alpha) * (L[-1] + B[-1])
+        b_t = beta * (l_t - L[-1]) + (1 - beta) * B[-1]
+        s_t = gamma * (data[t] - l_t) + (1 - gamma) * s_t_minus_s
+        
+        # Zapisujemy nowe wartości
+        L.append(l_t)
+        B.append(b_t)
+        S.append(s_t)
+        
+    # ---------------------------------------------------------
+    # 3. PROGNOZOWANIE (Forecasting)
+    # ---------------------------------------------------------
+    forecast = []
+    for m in range(1, steps_ahead + 1):
+        # Pobieramy najświeższą sezonowość z odpowiedniego miesiąca z przeszłości
+        # s_index wylicza, którą z ostatnich 12 wartości sezonowych musimy pobrać
+        s_index = -slen + ((m - 1) % slen) 
+        
+        # Wzór na prognozę
+        pred = L[-1] + (m * B[-1]) + S[s_index]
+        forecast.append(pred)
+        
+    return np.array(forecast)
+
 if __name__ == "__main__":
     values, index = read_data()
     train_values, test_values, train_index, test_index = split_data(values, index)
+    
     trend, trendline = decompose_trend(train_values) 
-    values_detrended = train_values-trend
+    values_detrended = train_values - trend
     seasonal = decompose_seasonality(values_detrended)
     values_deseasoned = train_values - seasonal
-    erratic= values_detrended - seasonal
+    erratic = values_detrended - seasonal
+    
     erratic1, values_detrended1, values_deseasoned1 = differencing(train_values)
-    show_plots=True # show/hide plots
+    
+    show_plots = False # show/hide plots
     if(show_plots):
-        plot_cpi(train_values, train_index, trend, values_detrended, seasonal, values_deseasoned, erratic, trendline,values_detrended1, values_deseasoned1, erratic1)
+        plot_cpi(train_values, train_index, trend, values_detrended, seasonal, values_deseasoned, erratic, trendline, values_detrended1, values_deseasoned1, erratic1)
+    
+    # 1. Przygotowanie stacjonarnego szeregu po różniczkowaniu
+    clean_erratic_train = erratic1[13:]    
+    
+    # 2. Ręczne wyliczenie i wykres PACF
+    my_pacf, my_conf_int = manual_pacf(clean_erratic_train, max_lag=20)    
+    plot_manual_pacf(my_pacf, my_conf_int)
+
+    # ------------------ NOWY KOD - DODANIE MODELU ARMA ------------------ #
+    
+    # Wybieramy rzędy p i q (przykładowo p=2, q=2)
+    p_order = 2
+    q_order = 2
+    steps_ahead = len(test_values)
+    
+    # Dopasowanie modelu algorytmem Hannana-Rissanena
+    print(f"Trenowanie ręcznego modelu ARMA({p_order}, {q_order})...")
+    intercept, ar_coefs, ma_coefs, residuals = fit_arma_hannan_rissanen(
+        clean_erratic_train, p=p_order, q=q_order
+    )
+    
+    # Generowanie prognozy samej reszty (erratic)
+    forecast_erratic = forecast_arma(
+        clean_erratic_train, intercept, ar_coefs, ma_coefs, residuals, steps=steps_ahead
+    )
+    
+    # -------------------------------------------------------------------- #
+
+    # Rekonstruujemy prognozę CPI (odwracamy różniczkowanie)
+    reconstructed_cpi_forecast = reconstruct_forecast(
+        original_values=train_values, 
+        differenced_values=values_detrended1, 
+        erratic_forecast=forecast_erratic, 
+        steps=steps_ahead
+    )
+
+    # Rysowanie końcowego wykresu
+    plt.figure(figsize=(12, 6))
+
+    # Rysujemy końcówkę danych treningowych (np. ostatnie 5 lat = 60 miesięcy)
+    plot_start = 300
+    plt.plot(train_index[plot_start:], train_values[plot_start:], color='blue', label='Historia CPI (Trening)')
+
+    # Rysujemy rzeczywiste dane testowe CPI
+    plt.plot(test_index, test_values, color='black', label='Rzeczywiste CPI (Test)')
+
+    # Rysujemy naszą zrekonstruowaną prognozę CPI
+    plt.plot(test_index, reconstructed_cpi_forecast, color='red', linestyle='dashed', linewidth=2, label='Prognoza z modelu (ARMA + Trend + Sezon)')
+
+    plt.title("Ostateczna Prognoza CPI")
+    plt.xlabel("Czas")
+    plt.ylabel("Wartość CPI")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.show()
+
+    steps_to_forecast = len(test_values)
+    
+    # Dobór parametrów alpha, beta, gamma to tzw. hiperparametryzacja.
+    # W gotowych bibliotekach (jak statsmodels) działa pod spodem optymalizator (np. L-BFGS), 
+    # który szuka takich wag, aby zminimalizować błąd. My ustawiamy je na sztywno, 
+    # ale możesz się nimi pobawić! (np. większa gamma = większa uwaga dla nowszych zmian sezonowych)
+    hw_manual_forecast = manual_holt_winters(
+        train_values, 
+        slen=12, 
+        alpha=0.3,  
+        beta=0.02, 
+        gamma=0.4, 
+        steps_ahead=steps_to_forecast
+    )
+
+    # Rysowanie wykresu
+    plt.figure(figsize=(12, 6))
+
+    # Aby było lepiej widać, pokazujemy tylko np. ostatnie 60 miesięcy z treningu
+    plot_start = 300
+    plt.plot(train_index[plot_start:], train_values[plot_start:], color='blue', label='Historia CPI (Trening)')
+
+    # Prawdziwe CPI ze zbioru testowego
+    plt.plot(test_index, test_values, color='black', label='Rzeczywiste CPI (Test)')
+
+    # Prognoza z ręcznego Holta-Wintersa
+    plt.plot(test_index, hw_manual_forecast, color='green', linestyle='dashed', linewidth=2, label='Ręczna Prognoza Holt-Winters')
+
+    plt.title("Ręczna implementacja Holta-Wintersa")
+    plt.xlabel("Czas")
+    plt.ylabel("Wartość CPI")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.show()
