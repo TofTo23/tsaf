@@ -501,7 +501,7 @@ if __name__ == "__main__":
     plt.figure(figsize=(12, 6))
 
     # Rysujemy końcówkę danych treningowych (np. ostatnie 5 lat = 60 miesięcy)
-    plot_start = 300
+    plot_start = 324
     plt.plot(train_index[plot_start:], train_values[plot_start:], color='blue', label='Historia CPI (Trening)')
 
     # Rysujemy rzeczywiste dane testowe CPI
@@ -536,7 +536,7 @@ if __name__ == "__main__":
     plt.figure(figsize=(12, 6))
 
     # Aby było lepiej widać, pokazujemy tylko np. ostatnie 60 miesięcy z treningu
-    plot_start = 300
+    plot_start = 324
     plt.plot(train_index[plot_start:], train_values[plot_start:], color='blue', label='Historia CPI (Trening)')
 
     # Prawdziwe CPI ze zbioru testowego
