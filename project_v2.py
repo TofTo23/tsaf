@@ -280,18 +280,6 @@ def plot_cpi(values, index, trend, values_detrended, seasonal, values_deseasoned
 
     plt.show()
 
-    lags = np.arange(len(pacf_values))
-    plt.figure(figsize=(10, 4))
-    plt.stem(lags, pacf_values, basefmt="k-")    
-    plt.axhspan(-conf_interval, conf_interval, alpha=0.2, color='blue', label='Przedział ufności (95%)')
-    plt.axhline(0, color='black', linewidth=1)
-    plt.title("Ręczny wykres PACF")
-    plt.xlabel("Opóźnienie (Lag)")
-    plt.xticks(lags) 
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.show()
-
 def plot_forecasts(train_index, train_values, test_index, test_values, forecasts_dict, title="Prognoza CPI", lookback=60):
 
     plt.figure(figsize=(12, 6))
