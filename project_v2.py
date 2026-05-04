@@ -263,7 +263,7 @@ def plot_cpi(values, index, trend, values_detrended, seasonal, values_deseasoned
     ax9.set_title('Detrended CPI (Differencing)')
 
     ax10.plot(index, values_detrended1-erratic1, color='orange', linewidth=2)
-    ax10.set_title('Seasonality (Original-detrended)')
+    ax10.set_title('Seasonality (Detrended-erratic)')
 
     ax11.plot(index, values_deseasoned1, color='purple', linewidth=2)
     ax11.set_title('Deseasoned CPI (Differencing)')
@@ -272,7 +272,7 @@ def plot_cpi(values, index, trend, values_detrended, seasonal, values_deseasoned
     ax12.set_title('Erratic Component (Differencing)')
 
     ax13.plot(index, values-values_detrended1, color='cyan', linewidth=2)
-    ax13.set_title('Trend (Original - Deseasoned)')
+    ax13.set_title('Trend (Original - Detrended)')
 
     ax14.plot(correlogram(erratic1), marker='o', linestyle='-')
     ax14.set_title('Correlogram (Differencing)')
