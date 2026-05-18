@@ -6,7 +6,7 @@ import scipy.signal as scs
 
 
 def read_data():
-    df = pd.read_csv(r"C:/Users/macdo/OneDrive/Pulpit\studia/TSAF/project/CPITimeSeries.csv", low_memory=False)
+    df = pd.read_csv(r"CPITimeSeries.csv", low_memory=False)
 
     greece_cpi = df[(df['Country Name'] == 'Greece') & 
                     (df['Indicator Name'] == 'Consumer Price Index, All items')]
@@ -145,8 +145,10 @@ def fit_arma(data, p, q, m=15):
 
     fitted = X @ beta
     final_residuals = np.zeros(N)
-    final_residuals[start:] = Y - fitted
-
+    final_residuals[start:] = Y - fitted 
+    # print(ar_coefs)
+    # print(ma_coefs)
+    print(intercept)
     return intercept, ar_coefs, ma_coefs, final_residuals
 
 def forecast_arma(data, intercept, ar_coefs, ma_coefs, residuals, steps):
@@ -214,8 +216,60 @@ def holt_winters(data, slen=12, alpha=0.2, beta=0.05, gamma=0.3, steps_ahead=24)
         
     return np.array(forecast)
 
+def read_data_poland():
+    df = pd.read_csv(r"CPITimeSeries.csv", low_memory=False)
+    poland_cpi = df[(df['Country Name'].str.contains('Germany', case=False, na=False)) & 
+                    (df['Indicator Name'] == 'Consumer Price Index, All items')]
+    date_columns = [col for col in poland_cpi.columns if 'M' in col and col[:4].isdigit()]
+    date_columns_1990_onwards = [col for col in date_columns if int(col[:4]) >= 1990]
+    values = np.array(pd.to_numeric(poland_cpi[date_columns_1990_onwards].iloc[0], errors='coerce'))
+    mask = np.isnan(values)
+    if np.any(mask):
+        values[mask] = np.nanmean(values)
+    return values
+
+def crosscov(timeserie1,timeserie2,T=0):
+    N=np.array([timeserie1.size,timeserie2.size]).min()
+    mu1=timeserie1.mean()
+    mu2=timeserie2.mean()
+    covCoef=0
+    for n in range(0,N-T-1):
+        covCoef=covCoef+(timeserie1[n]-mu1)*(timeserie2[n+T]-mu2)
+    return covCoef/float(np.abs(N))
+
+def crosscoef(timeserie1,timeserie2,T=0):
+    s1=timeserie1.std()
+    s2=timeserie2.std()
+    return crosscov(timeserie1,timeserie2,T)/(s1*s2)
+
+def ccs(timeserie1,timeserie2,maxT,twoside=False):
+    N=np.array([timeserie1.size,timeserie2.size]).min()
+    if twoside:
+        corrl=np.zeros(2*maxT+1)
+        ix=np.array(range(maxT+1))
+        ix=np.concatenate((-np.flip(ix[1:]),ix),axis=0)
+    else:
+        corrl=np.zeros(maxT+1)  
+        ix=np.array(range(maxT+1))
+    
+    for i in range(maxT+1):
+        if twoside:
+            if i==0:               
+                corrl[i+maxT]=crosscoef(timeserie1,timeserie2,i)
+            else:
+                corrl[i+maxT]=crosscoef(timeserie1,timeserie2,i)
+                corrl[maxT-i]=crosscoef(timeserie2,timeserie1,i)
+        else:
+            corrl[i]=crosscoef(timeserie1,timeserie2,i)
+            
+    d = {'CCS':corrl, 'upsig':np.ones(len(ix))*(1.96/np.sqrt(N)),
+         'dnsig':-np.ones(len(ix))*(1.96/np.sqrt(N))}
+    corrl=pd.DataFrame(data=d,index=ix)
+    return corrl
+
+
 def plot_cpi(values, index, trend, values_detrended, seasonal, values_deseasoned, erratic, trendline, values_detrended1, values_deseasoned1, erratic1):
-    cpiTS = pd.Series(data=values, index=index, name="Greece CPI - All items")
+    cpiTS = pd.Series(data=values, index=index, name="Greece CPI")
 
     fig1 = plt.figure(constrained_layout=True, figsize=(10, 8))
     gs = GridSpec(4, 2, figure=fig1)
@@ -223,7 +277,7 @@ def plot_cpi(values, index, trend, values_detrended, seasonal, values_deseasoned
     ax1, ax2 = fig1.add_subplot(gs[0, 0]), fig1.add_subplot(gs[1, 0])
     ax3, ax4 = fig1.add_subplot(gs[1, 1]), fig1.add_subplot(gs[2, 0])
     ax5, ax6 = fig1.add_subplot(gs[2, 1]), fig1.add_subplot(gs[0, 1])
-    ax7 = fig1.add_subplot(gs[3, :])
+    ax7 = fig1.add_subplot(gs[3, 0])
 
     cpiTS.plot(ax=ax1, xlabel='Time', ylabel='Value', legend=True)
     ax1.set_title('Consumer Price Index (CPI) - Greece')
@@ -254,7 +308,7 @@ def plot_cpi(values, index, trend, values_detrended, seasonal, values_deseasoned
     ax8, ax9 = fig2.add_subplot(gs2[0, 0]), fig2.add_subplot(gs2[0, 1])
     ax10, ax11 = fig2.add_subplot(gs2[1, 0]), fig2.add_subplot(gs2[1, 1])
     ax12, ax13 = fig2.add_subplot(gs2[2, 0]), fig2.add_subplot(gs2[2, 1])
-    ax14 = fig2.add_subplot(gs2[3, :])
+    ax14 = fig2.add_subplot(gs2[3, 0])
 
     ax8.plot(index, values, color='blue', linewidth=2)
     ax8.set_title('Original CPI')
@@ -272,7 +326,7 @@ def plot_cpi(values, index, trend, values_detrended, seasonal, values_deseasoned
     ax12.set_title('Erratic Component (Differencing)')
 
     ax13.plot(index, values-values_detrended1, color='cyan', linewidth=2)
-    ax13.set_title('Trend (Original - Detrended)')
+    ax13.set_title('Trend (Differencing)')
 
     ax14.plot(correlogram(erratic1), marker='o', linestyle='-')
     ax14.set_title('Correlogram (Differencing)')
@@ -280,14 +334,14 @@ def plot_cpi(values, index, trend, values_detrended, seasonal, values_deseasoned
 
     plt.show()
 
-def plot_forecasts(train_index, train_values, test_index, test_values, forecasts_dict, title="Prognoza CPI", lookback=60):
+def plot_forecasts(train_index, train_values, test_index, test_values, forecasts_dict, title="Forecasting CPI", lookback=360):
 
     plt.figure(figsize=(12, 6))
 
     plot_start = max(0, len(train_values) - lookback)
     
-    plt.plot(train_index[plot_start:], train_values[plot_start:], color='blue', label='Historia CPI (Trening)')
-    plt.plot(test_index, test_values, color='black', label='Rzeczywiste CPI (Test)')
+    plt.plot(train_index[plot_start:], train_values[plot_start:], color='blue', label='Previous CPI (Train)')
+    plt.plot(test_index, test_values, color='black', label='Real CPI (Test)')
 
     colors = ['red', 'green', 'orange', 'purple']
     for idx, (name, forecast) in enumerate(forecasts_dict.items()):
@@ -295,8 +349,8 @@ def plot_forecasts(train_index, train_values, test_index, test_values, forecasts
         plt.plot(test_index, forecast, color=color, linestyle='dashed', linewidth=2, label=name)
 
     plt.title(title)
-    plt.xlabel("Czas")
-    plt.ylabel("Wartość CPI")
+    plt.xlabel("Time")
+    plt.ylabel("CPI")
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.show()
@@ -327,6 +381,11 @@ if __name__ == "__main__":
     intercept, ar_coefs, ma_coefs, residuals = fit_arma(
         clean_erratic_train, p=p_order, q=q_order
     )
+
+    intercept_ar, ar_coefs_ar, residuals_ar = fit_ar(clean_erratic_train, p_order)
+    print("Auu")
+    print(intercept_ar)
+    print(ar_coefs_ar)
     forecast_erratic = forecast_arma(
         clean_erratic_train, intercept, ar_coefs, ma_coefs, residuals, steps=steps_ahead
     )
@@ -351,5 +410,24 @@ if __name__ == "__main__":
             train_index, train_values, test_index, test_values, 
             forecasts_dict=forecasts_to_plot, 
             title="Forecast Models Comparison",
-            lookback=48 
+            lookback=360 
         )
+
+    poland_values = read_data_poland()
+    train_values_p, _, _, _ = split_data(poland_values, index, test_size=48)
+    erratic1_p, _, _ = differencing(train_values_p)
+    clean_erratic_train_p = erratic1_p[13:]
+
+    ccs_result = ccs(clean_erratic_train_p, clean_erratic_train, maxT=24, twoside=True)
+
+    plt.figure(figsize=(10, 5))
+    plt.stem(ccs_result.index, ccs_result['CCS'], basefmt="k-")
+    plt.plot(ccs_result.index, ccs_result['upsig'], color='blue', linestyle='--')
+    plt.plot(ccs_result.index, ccs_result['dnsig'], color='blue', linestyle='--')
+    plt.fill_between(ccs_result.index, ccs_result['dnsig'], ccs_result['upsig'], color='blue', alpha=0.1)
+    plt.axhline(0, color='black', linewidth=1)
+    plt.title('Cross-Correlation (Germany vs Greece)')
+    plt.xlabel('Lag')
+    plt.ylabel('Cross-correlation')
+    plt.grid(True, alpha=0.3)
+    plt.show()
